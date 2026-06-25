@@ -1,0 +1,166 @@
+CREATE TABLE orders (
+    order_id SERIAL PRIMARY KEY,
+    customer_id INT NOT NULL,
+    customer_name VARCHAR(100),
+    customer_city VARCHAR(50),
+    order_date DATE NOT NULL,
+    product_category VARCHAR(50),
+    product_name VARCHAR(100),
+    quantity INT CHECK (quantity > 0),
+    unit_price DECIMAL(10,2) CHECK (unit_price > 0),
+    discount DECIMAL(4,2) DEFAULT 0,
+    payment_method VARCHAR(30),
+    delivery_status VARCHAR(20)
+);
+-- 50 customers ke liye data generate karein
+INSERT INTO orders (customer_id, customer_name, customer_city, order_date, 
+                    product_category, product_name, quantity, unit_price, 
+                    discount, payment_method, delivery_status)
+SELECT 
+    floor(random() * 50 + 1)::int,
+    'Customer_' || floor(random() * 50 + 1)::int,
+    (ARRAY['Mumbai', 'Delhi', 'Bangalore', 'Chennai', 'Hyderabad', 'Pune', 'Kolkata'])[floor(random() * 7 + 1)],
+    CURRENT_DATE - (random() * 365)::int,
+    (ARRAY['Electronics', 'Clothing', 'Books', 'Home', 'Beauty'])[floor(random() * 5 + 1)],
+    (ARRAY['Laptop', 'Phone', 'Shirt', 'Jeans', 'Novel', 'Sofa', 'Cream'])[floor(random() * 7 + 1)],
+    floor(random() * 5 + 1)::int,
+    round((random() * 5000 + 100)::numeric, 2),
+    round((random() * 20)::numeric, 2),
+    (ARRAY['Credit Card', 'UPI', 'Net Banking', 'COD'])[floor(random() * 4 + 1)],
+    (ARRAY['Delivered', 'Shipped', 'Pending', 'Cancelled'])[floor(random() * 4 + 1)]
+FROM generate_series(1, 500);
+-- 1. Total Revenue
+SELECT SUM(quantity * unit_price - discount) AS total_revenue 
+FROM orders;
+
+-- 2. Monthly Sales Trend
+SELECT 
+    DATE_TRUNC('month', order_date) AS month,
+    COUNT(*) AS total_orders,
+    SUM(quantity * unit_price - discount) AS revenue
+FROM orders
+GROUP BY month
+ORDER BY month;
+
+-- 3. Top 10 Customers by Revenue
+SELECT 
+    customer_id,
+    customer_name,
+    SUM(quantity * unit_price - discount) AS total_spent,
+    COUNT(*) AS order_count
+FROM orders
+GROUP BY customer_id, customer_name
+ORDER BY total_spent DESC
+LIMIT 10;
+-- 4. Category-wise Performance
+SELECT 
+    product_category,
+    COUNT(*) AS orders,
+    SUM(quantity) AS total_units_sold,
+    AVG(unit_price) AS avg_price,
+    SUM(quantity * unit_price - discount) AS revenue,
+    ROUND(SUM(quantity * unit_price - discount) * 100.0 / 
+          (SELECT SUM(quantity * unit_price - discount) FROM orders), 2) AS revenue_percentage
+FROM orders
+GROUP BY product_category
+ORDER BY revenue DESC;
+-- 5. Best Performing Cities
+SELECT 
+    customer_city,
+    COUNT(DISTINCT customer_id) AS unique_customers,
+    COUNT(*) AS orders,
+    SUM(quantity * unit_price - discount) AS revenue,
+    AVG(quantity * unit_price - discount) AS avg_order_value
+FROM orders
+GROUP BY customer_city
+ORDER BY revenue DESC;
+-- 6. Discount Impact on Sales
+SELECT 
+    CASE 
+        WHEN discount = 0 THEN 'No Discount'
+        WHEN discount < 10 THEN 'Low (1-9%)'
+        WHEN discount < 20 THEN 'Medium (10-19%)'
+        ELSE 'High (20%+)'
+    END AS discount_bucket,
+    COUNT(*) AS orders,
+    AVG(quantity * unit_price - discount) AS avg_revenue,
+    SUM(quantity) AS total_units
+FROM orders
+GROUP BY discount_bucket
+ORDER BY avg_revenue DESC;
+
+-- 7. Payment Method Preference
+SELECT 
+    payment_method,
+    COUNT(*) AS usage_count,
+    SUM(quantity * unit_price - discount) AS revenue,
+    AVG(quantity * unit_price - discount) AS avg_order_value
+FROM orders
+GROUP BY payment_method
+ORDER BY revenue DESC;
+-- 8. Customer Segmentation (RFM Analysis)
+WITH customer_metrics AS (
+    SELECT 
+        customer_id,
+        customer_name,
+        COUNT(*) AS frequency,
+        SUM(quantity * unit_price - discount) AS monetary,
+        MAX(order_date) AS last_purchase,
+        CURRENT_DATE - MAX(order_date) AS recency
+    FROM orders
+    GROUP BY customer_id, customer_name
+)
+SELECT 
+    customer_id,
+    customer_name,
+    frequency,
+    monetary,
+    recency,
+    CASE 
+        WHEN recency < 30 AND frequency > 5 AND monetary > 10000 THEN 'Champion'
+        WHEN recency < 60 AND frequency > 3 THEN 'Loyal'
+        WHEN recency < 90 AND frequency > 1 THEN 'Active'
+        WHEN recency < 180 THEN 'At Risk'
+        ELSE 'Lost'
+    END AS customer_segment
+FROM customer_metrics
+ORDER BY monetary DESC;
+-- 9. Day of Week Analysis
+SELECT 
+    EXTRACT(DOW FROM order_date) AS day_num,
+    TO_CHAR(order_date, 'Day') AS day_name,
+    COUNT(*) AS orders,
+    AVG(quantity * unit_price - discount) AS avg_revenue
+FROM orders
+GROUP BY day_num, day_name
+ORDER BY day_num;
+
+-- 10. Product Pair Analysis (Frequently Bought Together)
+SELECT 
+    o1.product_name AS product1,
+    o2.product_name AS product2,
+    COUNT(*) AS pair_count
+FROM orders o1
+JOIN orders o2 ON o1.customer_id = o2.customer_id 
+               AND o1.order_date = o2.order_date
+               AND o1.product_name < o2.product_name
+GROUP BY product1, product2
+ORDER BY pair_count DESC
+LIMIT 10;
+-- Monthly Revenue with Moving Average
+SELECT 
+    DATE_TRUNC('month', order_date) AS month,
+    SUM(quantity * unit_price - discount) AS revenue,
+    AVG(SUM(quantity * unit_price - discount)) OVER 
+        (ORDER BY DATE_TRUNC('month', order_date) 
+         ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS moving_avg_3m
+FROM orders
+GROUP BY month
+ORDER BY month;
+
+-- Cumulative Sales
+SELECT 
+    order_date,
+    SUM(quantity * unit_price - discount) OVER (ORDER BY order_date) AS cumulative_revenue
+FROM orders
+ORDER BY order_date;
